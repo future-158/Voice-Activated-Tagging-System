@@ -1,0 +1,10 @@
+torch
+torchvision
+torchaudio
+accelerate
+pyannote.audio
+ffmpeg-python
+TTS
+pydub
+pyannote.audio
+more-itertools
