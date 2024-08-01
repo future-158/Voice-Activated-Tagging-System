@@ -2,7 +2,7 @@
 
 ## 실행 
 
-[](https://huggingface.co/spaces/famousdetectiveadrianmonk/whisper-small-nato-phonetic-alphabet)
+[스페이스](https://huggingface.co/spaces/famousdetectiveadrianmonk/whisper-small-nato-phonetic-alphabet)
 에서 테스트 가능 (cpu inference라서 느림)
 
 
