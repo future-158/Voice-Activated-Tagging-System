@@ -1,39 +1,19 @@
-if "":
-    !pip install --upgrade --quiet pip
-    !pip install --upgrade --quiet datasets[audio] transformers accelerate evaluate jiwer tensorboard gradio
-
-
 from datasets import load_dataset, DatasetDict, Dataset
+from datasets import Audio
 
-
-
-if "":
-    common_voice = DatasetDict()
-    common_voice["train"] = load_dataset("mozilla-foundation/common_voice_11_0", "hi", split="train+validation", use_auth_token=True, trust_remote_code=True)
-    common_voice["test"] = load_dataset("mozilla-foundation/common_voice_11_0", "hi", split="test", use_auth_token=True, trust_remote_code=True)
-    common_voice = common_voice.select_columns(["audio", "sentence"])  
-
-
-
-common_voice = DatasetDict()
-common_voice["train"] = Dataset.load_from_disk("data/dataset_500/train")    
-common_voice["test"] = Dataset.load_from_disk("data/dataset_500/test")
-
-
+common_voice = load_dataset("famousdetectiveadrianmonk/nato-phoentic-alphabet-voice")
 common_voice = common_voice.select_columns(["audio", "sentence"])  
+common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16000))
 
 from transformers import WhisperFeatureExtractor
 from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
 
-feature_extractor = WhisperFeatureExtractor.from_pretrained("openai/whisper-small", task="transcribe")
-tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-small", task="transcribe")
 processor = WhisperProcessor.from_pretrained("openai/whisper-small", task="transcribe")
+feature_extractor = processor.feature_extractor
+tokenizer = processor.tokenizer
 
 print(common_voice["train"][0])
-
-from datasets import Audio
-common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16000))
 
 
 def prepare_dataset(batch):
@@ -47,23 +27,20 @@ def prepare_dataset(batch):
     batch["labels"] = tokenizer(batch["sentence"]).input_ids
     return batch
 
-"""We can apply the data preparation function to all of our training examples using dataset's `.map` method. The argument `num_proc` specifies how many CPU cores to use. Setting `num_proc` > 1 will enable multiprocessing. If the `.map` method hangs with multiprocessing, set `num_proc=1` and process the dataset sequentially."""
 
 common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"])
 
-common_voice['train'][0]['labels']
+
 common_voice['train'][0]['input_features']
+common_voice['train'][0]['labels']
 
 from transformers import WhisperForConditionalGeneration
 model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-small")
 
-
-# model.generation_config.language = "en"
-# model.generation_config.task = "transcribe"
+# i dont know what this option does, and at this point i am too afraid to ask
 model.generation_config.forced_decoder_ids = None
 
 """### Define a Data Collator
-
 The data collator for a sequence-to-sequence speech model is unique in the sense that it
 treats the `input_features` and `labels` independently: the  `input_features` must be
 handled by the feature extractor and the `labels` by the tokenizer.
@@ -83,7 +60,6 @@ feature extractor and the tokenizer operations:
 """
 
 import torch
-
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 
@@ -161,22 +137,21 @@ In the final step, we define all the parameters related to training. For more de
 """
 
 from transformers import Seq2SeqTrainingArguments
-
 training_args = Seq2SeqTrainingArguments(
-    output_dir="./whisper-small-hi",  # change to a repo name of your choice
+    output_dir="./whisper-small-en",  # change to a repo name of your choice
     per_device_train_batch_size=16,
     gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
     learning_rate=1e-5,
     warmup_steps=500,
-    max_steps=4000,
+    max_steps=2000,
     gradient_checkpointing=True,
     fp16=True,
     evaluation_strategy="steps",
     per_device_eval_batch_size=8,
     predict_with_generate=True,
     generation_max_length=225,
-    save_steps=1000,
-    eval_steps=1000,
+    save_steps=500,
+    eval_steps=500,
     logging_steps=25,
     report_to=["tensorboard"],
     load_best_model_at_end=True,
@@ -185,12 +160,6 @@ training_args = Seq2SeqTrainingArguments(
     push_to_hub=False,
 )
 
-"""**Note**: if one does not want to upload the model checkpoints to the Hub,
-set `push_to_hub=False`.
-
-We can forward the training arguments to the 🤗 Trainer along with our model,
-dataset, data collator and `compute_metrics` function:
-"""
 
 from transformers import Seq2SeqTrainer
 
@@ -205,52 +174,43 @@ trainer = Seq2SeqTrainer(
 )
 
 """We'll save the processor object once before starting training. Since the processor is not trainable, it won't change over the course of training:"""
-
 trainer.train()
 
 processor.save_pretrained(training_args.output_dir)
-
-tokenizer.save_pretrained(training_args.output_dir)
-feature_extractor.save_pretrained(training_args.output_dir)
-
 trainer.save_model(training_args.output_dir)
+
+if "":
+    # push to hub. use your repo name
+    model.push_to_hub("famousdetectiveadrianmonk/whisper-small-nato-phoentic-alphabet")
+
 
 
 
 from transformers import pipeline
 import gradio as gr
-
-
-
-
 from transformers import WhisperForConditionalGeneration
-model = WhisperForConditionalGeneration.from_pretrained(training_args.output_dir)   
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+if "":
+    model = WhisperForConditionalGeneration.from_pretrained("famousdetectiveadrianmonk/whisper-small-nato-phoentic-alphabet")   
+else:
+    model = WhisperForConditionalGeneration.from_pretrained(training_args.output_dir)   
 
 
-feature_extractor = WhisperFeatureExtractor.from_pretrained("openai/whisper-small", task="transcribe")
-tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-small", task="transcribe")
 processor = WhisperProcessor.from_pretrained("openai/whisper-small", task="transcribe")
+model = AutoModelForSpeechSeq2Seq.from_pretrained("famousdetectiveadrianmonk/whisper-small-nato-phoentic-alphabet")
 
 
 from transformers import pipeline
 whisper_asr = pipeline(
-    "automatic-speech-recognition", model=model, device=0, tokenizer=tokenizer ,
-    feature_extractor=feature_extractor
+    "automatic-speech-recognition", model=model, device=0, tokenizer=processor.tokenizer ,
+    feature_extractor=processor.feature_extractor
 )
 
-
+# i dont know what this option does, and at this point i am too afraid to ask
 whisper_norm = whisper_asr.tokenizer._normalize
 
 
-
-
-
-
-
-"""We then set our batch size. We also restrict the number of samples for evaluation to 128 for the purpose of this blog. If you want to run on the full dataset to get the official results, comment out or remove this line from the proceeding code cell!"""
-
-
-# only for debugging, restricts the number of rows to numeric value in brackets
 
 def normalise(batch):
     batch["sentence"] = whisper_norm(batch['sentence'])
@@ -266,26 +226,25 @@ def data(dataset):
 
 
 
-test_ds = common_voice["test"] = Dataset.load_from_disk("data/dataset_500/test")
-dataset = test_ds.map(normalise)
-
-
+test_ds = load_dataset("famousdetectiveadrianmonk/nato-phoentic-alphabet-voice", split='test')
+test_ds = test_ds.select_columns(["audio", "sentence"])  
+test_ds = test_ds.cast_column("audio", Audio(sampling_rate=16000))
+test_ds  = test_ds.map(normalise)
 
 
 predictions = []
 references = []
-
-# run streamed inference
-for out in whisper_asr(data(dataset)):
-    
+for out in whisper_asr(data(test_ds)):
     prediction = whisper_norm(out["text"])
-    
     predictions.append(prediction)
+
     references.append(out["reference"][0])
 
-    print('-'*50)
-    print(prediction)
-    print(out["reference"][0])
+    import random
+    if random.random() < 0.1:
+        print('-'*50)
+        print(out["reference"][0])
+        print(prediction)
 
 
 import evaluate
@@ -298,29 +257,6 @@ wer = round(100 * wer, 2)
 
 print("WER:", wer) # 
 
-# 1시간 학습후 wer 2.76 기존 5에서 반절로 떨어짐
 
 
 
-
-def transcribe(audio):
-    text = pipe(audio)["text"]
-    return text
-
-iface = gr.Interface(
-    fn=transcribe,
-    inputs=gr.Audio(source="microphone", type="filepath"),
-    outputs="text",
-    title="Whisper Small Hindi",
-    description="Realtime demo for Hindi speech recognition using a fine-tuned Whisper small model.",
-)
-
-iface.launch()
-
-"""## Closing Remarks
-
-In this blog, we covered a step-by-step guide on fine-tuning Whisper for multilingual ASR
-using 🤗 Datasets, Transformers and the Hugging Face Hub. For more details on the Whisper model, the Common Voice dataset and the theory behind fine-tuning, refere to the accompanying [blog post](https://huggingface.co/blog/fine-tune-whisper). If you're interested in fine-tuning other
-Transformers models, both for English and multilingual ASR, be sure to check out the
-examples scripts at [examples/pytorch/speech-recognition](https://github.com/huggingface/transformers/tree/main/examples/pytorch/speech-recognition).
-"""
